@@ -20,7 +20,7 @@ from pkg_resources import iter_entry_points
 import acdcli
 from acdcli.api import client
 from acdcli.api.common import RequestError, is_valid_id
-from acdcli.cache import db, format
+from acdcli.cache import db, format, schema
 from acdcli.utils import hashing, progress
 from acdcli.utils.threading import QueuedLoader
 
@@ -658,6 +658,28 @@ def regex_helper(args: argparse.Namespace) -> 'List[re._pattern_type]':
     return excl_re
 
 
+def delete_extraneous(node, path, exclude_re, exclude_paths, delete_excluded):
+    if not os.path.exists(path) and node.status != 'TRASH':
+        short_nm = os.path.basename(path)
+
+        #determine whether the missing file matches any exclude pattern
+        path_excluded = (path in exclude_paths) or any(map(lambda x: re.match(x, short_nm), exclude_re))
+
+        if delete_excluded or not path_excluded:
+            logger.info('Moving "%s" to trash as has been removed locally.' % node.simple_name())
+
+            r = acd_client.move_to_trash(node.id)
+            cache.insert_node(r)
+
+            return
+
+    if isinstance(node, schema.Folder):
+        for child in filter(lambda x: node.status != 'TRASH', node.children):
+            child_path = os.path.join(path, child.simple_name())
+
+            delete_extraneous(child, child_path, exclude_re, exclude_paths, delete_excluded)
+
+
 @no_autores_trash_action
 def upload_action(args: argparse.Namespace) -> int:
     if not cache.get_node(args.parent):
@@ -665,6 +687,15 @@ def upload_action(args: argparse.Namespace) -> int:
         return INVALID_ARG_RETVAL
 
     excl_re = regex_helper(args)
+
+    if args.delete:
+        exclude_paths = [os.path.realpath(p) for p in args.exclude_path]
+
+        for path in (os.path.realpath(p) for p in args.path):
+            # get destination node on server
+            node = cache.resolve('/' + os.path.basename(path), cache.get_node(args.parent))[0]
+
+            delete_extraneous(node, path, excl_re, exclude_paths, args.delete_excluded)
 
     jobs = []
     ret_val = 0
@@ -1221,6 +1252,10 @@ def get_parser() -> tuple:
                            help='exclude duplicate files from upload')
     upload_sp.add_argument('--remove-source-files', '-rsf', action='store_true',
                            help='remove local files on successful upload')
+    upload_sp.add_argument('--delete', action='store_true',
+                           help='delete extraneous files from dest dirs')
+    upload_sp.add_argument('--delete-excluded', action='store_true',
+                           help='also delete excluded files from dest dirs')
     upload_sp.add_argument('path', nargs='+', help='a path to a local file or directory')
     upload_sp.add_argument('parent', help='remote parent folder')
     upload_sp.set_defaults(func=upload_action)
