@@ -3,6 +3,8 @@ Contributors
 
 Thanks to
 
+- `sthm <https://github.com/sthm>`_ for extending the upload action
+
 - `chrisidefix <https://github.com/chrisidefix>`_ for adding the find-md5 action and 
   forcing me to create a proper package and use PyPI
 
